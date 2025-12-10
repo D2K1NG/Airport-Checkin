@@ -2,12 +2,13 @@ name: KataBump Auto Renew
 
 on:
   schedule:
-    # 每 3 天运行一次 (因为 Renew period 是 4 天)
+    # 北京时间每天上午 10:00 运行 (UTC 02:00)
+    # 建议设置为每3天运行一次，避免频繁请求
     - cron: '0 2 */3 * *'
-  workflow_dispatch:
+  workflow_dispatch: # 允许手动点击按钮运行
 
 jobs:
-  renew:
+  run-renew:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -19,10 +20,15 @@ jobs:
           python-version: '3.9'
 
       - name: Install Dependencies
-        run: pip install -r requirements.txt
+        run: |
+          python -m pip install --upgrade pip
+          # 关键步骤：这里直接安装 requests 和 beautifulsoup4
+          # 这样即使没有 requirements.txt 也不会报错
+          pip install requests beautifulsoup4
 
-      - name: Run Renew Script
+      - name: Run Script
         env:
+          # 必须对应你在 Secrets 里填写的名字
           COOKIE: ${{ secrets.COOKIE }}
           USER_AGENT: ${{ secrets.USER_AGENT }}
           SCKEY: ${{ secrets.SCKEY }}
