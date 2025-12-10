@@ -1,32 +1,31 @@
-name: 自动签到
+name: KataBump Auto Renew
 
 on:
   schedule:
-    - cron: '0 0 * * *'  # 每天 UTC 0 点执行（北京时间 8 点）
+    # 每 3 天运行一次 (因为 Renew period 是 4 天)
+    - cron: '0 2 */3 * *'
   workflow_dispatch:
 
 jobs:
-  checkin:
+  renew:
     runs-on: ubuntu-latest
-
     steps:
-    - name: 检出代码
-      uses: actions/checkout@v2
+      - name: Checkout Code
+        uses: actions/checkout@v3
 
-    - name: 安装依赖
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y python3 python3-pip
-        sudo apt-get install -y chromium-chromedriver
-        pip3 install selenium requests
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
 
-    - name: 设置环境变量
-      run: echo "EMAIL=${{ secrets.EMAIL }}" >> $GITHUB_ENV
-      run: echo "PASSWORD=${{ secrets.PASSWORD }}" >> $GITHUB_ENV
-      run: echo "BASE_URL=${{ secrets.BASE_URL }}" >> $GITHUB_ENV
-      run: echo "SCKEY=${{ secrets.SCKEY }}" >> $GITHUB_ENV
-      run: echo "TG_BOT_TOKEN=${{ secrets.TG_BOT_TOKEN }}" >> $GITHUB_ENV
-      run: echo "TG_USER_ID=${{ secrets.TG_USER_ID }}" >> $GITHUB_ENV
+      - name: Install Dependencies
+        run: pip install -r requirements.txt
 
-    - name: 运行自动签到和Renew点击脚本
-      run: python3 main.py
+      - name: Run Renew Script
+        env:
+          COOKIE: ${{ secrets.COOKIE }}
+          USER_AGENT: ${{ secrets.USER_AGENT }}
+          SCKEY: ${{ secrets.SCKEY }}
+          TGBOT: ${{ secrets.TGBOT }}
+          TGUSERID: ${{ secrets.TGUSERID }}
+        run: python main.py
