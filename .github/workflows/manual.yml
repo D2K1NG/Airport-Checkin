@@ -23,12 +23,14 @@ jobs:
           pip install requests beautifulsoup4
 
       - name: Run Script
-        # ▼▼▼▼▼ 关键在这里！没有这段 env，脚本就会报你遇到的错 ▼▼▼▼▼
+        # ▼▼▼▼▼▼ 关键修复点 ▼▼▼▼▼▼
+        # 这一段 env: 必须存在，且缩进必须正确！
+        # 如果缺少这一段，main.py 就会报 "未设置 COOKIE"
         env:
           COOKIE: ${{ secrets.COOKIE }}
           USER_AGENT: ${{ secrets.USER_AGENT }}
           SCKEY: ${{ secrets.SCKEY }}
           TGBOT: ${{ secrets.TGBOT }}
           TGUSERID: ${{ secrets.TGUSERID }}
-        # ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+        # ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
         run: python main.py
