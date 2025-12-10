@@ -1,98 +1,95 @@
 import requests
-import json
+from bs4 import BeautifulSoup
 import os
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.action_chains import ActionChains
 import time
 
-requests.packages.urllib3.disable_warnings()
+# --- 配置区域 (从 GitHub Secrets 获取) ---
+# 注意：KataBump 这类面板不能只用账号密码登录，必须用 Cookie 绕过 Cloudflare
+COOKIE = os.environ.get("COOKIE")
+USER_AGENT = os.environ.get("USER_AGENT")
 
-# 从环境变量中获取 SCKEY、TG_BOT_TOKEN、TG_USER_ID 等
-SCKEY = os.environ.get('SCKEY')
-TG_BOT_TOKEN = os.environ.get('TG_BOT_TOKEN')
-TG_USER_ID = os.environ.get('TG_USER_ID')
+# 你的服务器 ID，从你提供的 URL 或 HTML 中可以看到是 180484
+# 如果你有多个服务器，可以把 IDs 写成列表，例如 [180484, 123456]
+SERVER_IDS = [180484] 
 
-# 配置 Selenium WebDriver，使用无头模式
-chrome_options = Options()
-chrome_options.add_argument("--headless")  # 开启无头模式
-chrome_options.add_argument("--disable-gpu")  # 禁用 GPU 加速
-chrome_options.add_argument("--no-sandbox")  # 禁用沙盒模式
+# 推送配置 (Server酱 / TG)
+SCKEY = os.environ.get("SCKEY")
+TG_BOT_TOKEN = os.environ.get("TGBOT")
+TG_USER_ID = os.environ.get("TGUSERID")
 
-driver = webdriver.Chrome(options=chrome_options)
+def send_notification(content):
+    if TG_BOT_TOKEN and TG_USER_ID:
+        requests.post(f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage", data={"chat_id": TG_USER_ID, "text": content})
+    if SCKEY:
+        requests.post(f"https://sctapi.ftqq.com/{SCKEY}.send", data={"title": "KataBump续期通知", "desp": content})
+    print(f"通知已发送: {content}")
 
-# 打开目标网页
-driver.get('https://dashboard.katabump.com/servers/edit?id=180484')  # 替换为你的页面URL
+def renew_server(server_id):
+    if not COOKIE or not USER_AGENT:
+        print("错误：未设置 COOKIE 或 USER_AGENT")
+        return
 
-# 等待页面加载
-time.sleep(5)
-
-# 查找并点击“Renew”按钮
-renew_button = driver.find_element(By.CSS_SELECTOR, 'button[data-bs-toggle="modal"][data-bs-target="#renew-modal"]')
-
-# 使用 ActionChains 来点击按钮
-ActionChains(driver).move_to_element(renew_button).click().perform()
-
-# 可以继续操作，比如签到等
-time.sleep(2)  # 等待按钮点击后的响应
-
-# 在这里可以继续用 requests 或其他方式进行后续操作
-def checkin(email=os.environ.get('EMAIL'), password=os.environ.get('PASSWORD'),
-            base_url=os.environ.get('BASE_URL')):
-    # 检查 email 格式是否有效
-    if not email or '@' not in email:
-        print("Invalid email format")
-        return "Invalid email format"
-    
-    email = email.split('@')
-    email = email[0] + '%40' + email[1]
-    
-    session = requests.session()
-    session.get(base_url, verify=False)
-    
-    # 登录请求
-    login_url = base_url + '/auth/login'
+    session = requests.Session()
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; WOW64) '
-                      'AppleWebKit/537.36 (KHTML, like Gecko) '
-                      'Chrome/56.0.2924.87 Safari/537.36',
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        "User-Agent": USER_AGENT,
+        "Cookie": COOKIE,
+        "Referer": "https://dashboard.katabump.com/dashboard",
+        "Origin": "https://dashboard.katabump.com"
     }
     
-    post_data = f'email={email}&passwd={password}&code='
-    post_data = post_data.encode()
-    response = session.post(login_url, post_data, headers=headers, verify=False)
+    # 第一步：访问页面获取 CSRF Token
+    edit_url = f"https://dashboard.katabump.com/servers/edit?id={server_id}"
+    print(f"正在访问页面获取 Token: {edit_url}")
     
-    # 签到请求
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; WOW64) '
-                      'AppleWebKit/537.36 (KHTML, like Gecko) '
-                      'Chrome/56.0.2924.87 Safari/537.36',
-        'Referer': base_url + '/user'
-    }
-    
-    response = session.post(base_url + '/user/checkin', headers=headers, verify=False)
     try:
-        response = json.loads(response.text)
-        print(response['msg'])
-        return response['msg']
-    except json.JSONDecodeError:
-        print("Failed to decode response")
-        return "Failed to decode response"
+        resp = session.get(edit_url, headers=headers)
+        if resp.status_code != 200:
+            msg = f"访问页面失败，状态码: {resp.status_code}。可能 Cookie 已过期或被 Cloudflare 拦截。"
+            print(msg)
+            send_notification(msg)
+            return
 
-# 执行签到操作
-result = checkin()
+        # 解析 HTML 寻找 CSRF
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        # 在 HTML 中寻找 <input type="hidden" name="csrf" value="...">
+        csrf_input = soup.find('input', {'name': 'csrf'})
+        
+        if not csrf_input:
+            print("警告：未找到 CSRF Token，尝试直接请求...")
+            csrf_token = ""
+        else:
+            csrf_token = csrf_input.get('value')
+            print(f"成功获取 CSRF Token: {csrf_token[:10]}...")
 
-# 通过 Server 酱发送通知
-if SCKEY != '':
-    sendurl = f'https://sctapi.ftqq.com/{SCKEY}.send?title=机场签到&desp={result}'
-    r = requests.get(url=sendurl)
+        # 第二步：发送续期请求
+        renew_url = f"https://dashboard.katabump.com/api-client/renew?id={server_id}"
+        
+        # 构造 POST 数据
+        # 注意：这里我们无法生成 cf-turnstile-response，只能留空或不传
+        # 如果服务器强制校验 Turnstile，这一步会失败 (403 或 500)
+        payload = {
+            "csrf": csrf_token,
+            # "cf-turnstile-response": "" # 无法生成
+        }
+        
+        print("正在发送续期请求...")
+        post_resp = session.post(renew_url, headers=headers, data=payload)
+        
+        if post_resp.status_code == 200:
+            # 即使状态码是 200，也要检查返回内容是否包含成功提示
+            # 通常成功会重定向或者返回 JSON
+            print(f"请求发送成功。服务器返回: {post_resp.text[:100]}")
+            send_notification(f"服务器 {server_id} 续期操作已执行。请手动检查是否成功。\n返回: {post_resp.text[:50]}")
+        else:
+            msg = f"续期失败，状态码: {post_resp.status_code}。可能是 Cloudflare 验证码拦截。"
+            print(msg)
+            send_notification(msg)
 
-# 通过 Telegram 发送通知
-if TG_USER_ID != '':
-    sendurl = f'https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage?chat_id={TG_USER_ID}&text={result}&disable_web_page_preview=True'
-    r = requests.get(url=sendurl)
+    except Exception as e:
+        print(f"发生异常: {e}")
+        send_notification(f"脚本执行出错: {e}")
 
-# 关闭浏览器
-driver.quit()
+if __name__ == "__main__":
+    for sid in SERVER_IDS:
+        renew_server(sid)
+        time.sleep(5) # 稍微等待一下
