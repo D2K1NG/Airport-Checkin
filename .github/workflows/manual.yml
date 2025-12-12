@@ -24,11 +24,27 @@ jobs:
         playwright install chromium
         playwright install-deps
 
+    # 添加一个调试步骤，打印一下变量是否存在（不会打印值，只检查有没有读到）
+    - name: Debug Secrets
+      env:
+        CHECK_TOKEN: ${{ secrets.TGBOT }}
+        CHECK_ID: ${{ secrets.TGUSERID }}
+      run: |
+        if [ -z "$CHECK_TOKEN" ]; then echo "❌ 警告: TGBOT 变量为空！"; else echo "✅ TGBOT 变量已读取"; fi
+        if [ -z "$CHECK_ID" ]; then echo "❌ 警告: TGUSERID 变量为空！"; else echo "✅ TGUSERID 变量已读取"; fi
+
     - name: Run Renew Script
       env:
+        # 左边是代码用的名字 = 右边是你仓库里的名字
         COOKIE: ${{ secrets.COOKIE }}
-        # 注意：这里不需要 USER_AGENT 变量了，Playwright 会自己生成
         URL: ${{ secrets.URL }}
-        TG_TOKEN: ${{ secrets.TG_TOKEN }}
-        TG_USER_ID: ${{ secrets.TG_USER_ID }}
+        TG_TOKEN: ${{ secrets.TGBOT }}      # 这里改了！
+        TG_USER_ID: ${{ secrets.TGUSERID }} # 这里改了！
       run: python main.py
+      
+    - name: Upload Debug Screenshots
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: debug-screenshots
+        path: "*.png"
