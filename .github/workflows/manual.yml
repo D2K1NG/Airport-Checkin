@@ -1,36 +1,32 @@
-name: KataBump Auto Renew
+name: VPS Auto Renew
 
 on:
   schedule:
-    - cron: '0 2 */3 * *'
-  workflow_dispatch:
+    - cron: '30 1 * * *' # 北京时间早上 9:30 左右运行
+  workflow_dispatch:     # 允许手动点击 Run workflow 触发
 
 jobs:
   run-renew:
     runs-on: ubuntu-latest
+    
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
+    - name: Checkout code
+      uses: actions/checkout@v3
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
 
-      - name: Install Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests beautifulsoup4
+    - name: Install Dependencies
+      run: |
+        pip install requests beautifulsoup4
 
-      - name: Run Script
-        # ▼▼▼▼▼▼ 关键修复点 ▼▼▼▼▼▼
-        # 这一段 env: 必须存在，且缩进必须正确！
-        # 如果缺少这一段，main.py 就会报 "未设置 COOKIE"
-        env:
-          COOKIE: ${{ secrets.COOKIE }}
-          USER_AGENT: ${{ secrets.USER_AGENT }}
-          SCKEY: ${{ secrets.SCKEY }}
-          TGBOT: ${{ secrets.TGBOT }}
-          TGUSERID: ${{ secrets.TGUSERID }}
-        # ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
-        run: python main.py
+    - name: Run Renew Script
+      env:
+        COOKIE: ${{ secrets.COOKIE }}
+        USER_AGENT: ${{ secrets.USER_AGENT }}
+        URL: ${{ secrets.URL }}
+        TG_TOKEN: ${{ secrets.TG_TOKEN }}
+        TG_USER_ID: ${{ secrets.TG_USER_ID }}
+      run: python main.py
