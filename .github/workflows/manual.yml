@@ -1,4 +1,4 @@
-name: VPS Auto Renew (Stealth)
+name: VPS Auto Renew (Pure)
 
 on:
   schedule:
@@ -19,8 +19,9 @@ jobs:
         python-version: '3.9'
 
     - name: Install Dependencies
+      # ⚠️ 注意：这里只安装 requests 和 playwright，绝对不会报错
       run: |
-        pip install playwright requests playwright-stealth
+        pip install playwright requests
         playwright install chromium
         playwright install-deps
 
