@@ -1,9 +1,9 @@
-name: VPS Auto Renew (Playwright)
+name: VPS Auto Renew (Stealth)
 
 on:
   schedule:
-    - cron: '30 1 * * *' # 北京时间 09:30 每天运行
-  workflow_dispatch:     # 允许手动运行
+    - cron: '30 1 * * *' # 北京时间 09:30
+  workflow_dispatch:
 
 jobs:
   run-renew:
@@ -20,22 +20,19 @@ jobs:
 
     - name: Install Dependencies
       run: |
-        pip install playwright requests
+        pip install playwright requests playwright-stealth
         playwright install chromium
         playwright install-deps
 
     - name: Run Renew Script
       env:
-        # 左边是脚本里用的名字 = 右边是你仓库Secrets的名字
         COOKIE: ${{ secrets.COOKIE }}
         URL: ${{ secrets.URL }}
-        USER_AGENT: ${{ secrets.USER_AGENT }}
-        # 修正：将你仓库里的变量名映射给脚本
         TG_TOKEN: ${{ secrets.TGBOT }}
         TG_USER_ID: ${{ secrets.TGUSERID }}
+        USER_AGENT: ${{ secrets.USER_AGENT }}
       run: python main.py
 
-    # 无论成功失败，都上传截图以便调试
     - name: Upload Debug Screenshots
       if: always()
       uses: actions/upload-artifact@v4
