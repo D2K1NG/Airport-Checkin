@@ -1,6 +1,5 @@
 import os
 import time
-import random
 import requests
 from playwright.sync_api import sync_playwright
 
@@ -15,7 +14,7 @@ def send_telegram(msg):
     print(f"🔔 TG通知: {msg}")
     if not TG_TOKEN or not TG_USER_ID: return
     url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
-    payload = {"chat_id": TG_USER_ID, "text": f"🤖 VPS续期通知 (V11):\n{msg}", "parse_mode": "Markdown"}
+    payload = {"chat_id": TG_USER_ID, "text": f"🤖 VPS续期结果 (V12):\n{msg}", "parse_mode": "Markdown"}
     try:
         requests.post(url, json=payload, timeout=10)
     except:
@@ -31,12 +30,13 @@ def parse_cookies(cookie_str, domain):
     return cookies
 
 def run():
-    print("🚀 启动 V11 强制顺序版...")
+    print("🚀 启动 V12 拒绝假成功版...")
+    
+    # 基础检查
     if not COOKIE_STR or not TARGET_URL:
-        send_telegram("❌ 错误：Secrets 变量缺失")
+        send_telegram("❌ 致命错误：Secrets 变量缺失")
         exit(1)
 
-    # 必须使用抓包时的 UA
     final_ua = USER_AGENT if USER_AGENT else "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     
     try:
@@ -45,7 +45,6 @@ def run():
         domain = "dashboard.katabump.com"
 
     with sync_playwright() as p:
-        # 启动浏览器，移除自动化特征
         browser = p.chromium.launch(
             headless=True,
             args=['--disable-blink-features=AutomationControlled', '--no-sandbox']
@@ -54,7 +53,7 @@ def run():
         context.add_cookies(parse_cookies(COOKIE_STR, domain))
         page = context.new_page()
 
-        # 注入隐身代码，防止被判定为机器人
+        # 注入隐身代码
         page.add_init_script("""
             Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
             Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
@@ -72,116 +71,109 @@ def run():
                 raise Exception("Cookie失效，重定向回登录页")
 
             # 2. 打开弹窗
-            print("2️⃣ 点击 Renew 打开弹窗...")
+            print("2️⃣ 打开 Renew 弹窗...")
             try:
-                # 优先点击文本为 Renew 的按钮
                 page.get_by_text("Renew", exact=True).first.click()
             except:
-                # 备用方案
                 page.locator(".btn-primary").filter(has_text="Renew").click()
             
             page.wait_for_timeout(3000)
-            page.screenshot(path="debug_step2_modal_open.png")
+            
+            # 确保弹窗开了
+            if not page.locator(".modal-dialog").is_visible():
+                raise Exception("弹窗未打开，无法继续")
 
-            # 3. 核心步骤：处理验证码（必须先做这一步！）
-            print("3️⃣ 正在处理 Cloudflare 验证码 (白色确认框)...")
-            captcha_passed = False
+            # 3. Cloudflare 验证 (死磕变绿)
+            print("3️⃣ 处理 Cloudflare 验证码...")
+            captcha_verified = False
             
             try:
-                # 定位 iframe
                 iframe = page.frame_locator("iframe[src*='challenges.cloudflare.com']").first
-                # 等待 iframe 加载出来
-                iframe.locator("body").wait_for(timeout=10000)
+                iframe.locator("body").wait_for(timeout=8000)
                 
-                # 寻找那个复选框
-                checkbox = iframe.locator("input[type='checkbox']")
-                
-                if checkbox.is_visible():
-                    print("👆 找到验证框，正在点击...")
-                    
-                    # 模拟人类操作：先移动鼠标过去，稍微停顿，再点击
-                    box = checkbox.bounding_box()
+                cb = iframe.locator("input[type='checkbox']")
+                if cb.is_visible():
+                    print("👆 点击验证码...")
+                    # 模拟更真实点击
+                    box = cb.bounding_box()
                     if box:
-                        page.mouse.move(box["x"] + 10, box["y"] + 10)
-                        time.sleep(0.5)
+                        page.mouse.move(box["x"]+10, box["y"]+10)
+                        time.sleep(0.2)
                         page.mouse.down()
                         time.sleep(0.1)
                         page.mouse.up()
                     else:
-                        checkbox.click(force=True)
+                        cb.click(force=True)
                     
-                    # --- 死等变绿 ---
-                    print("⏳ 点击完毕，等待变绿 (Success/成功)...")
-                    for i in range(20): # 最多等20秒
-                        # 检查是否有成功的文字出现
+                    print("⏳ 等待变绿...")
+                    for i in range(20):
+                        # 这里只检测是否变绿，绝对不当做最终成功信号
                         if iframe.get_by_text("Success").is_visible() or iframe.get_by_text("成功").is_visible():
-                            print("✅ 验证通过！(检测到成功标志)")
-                            captcha_passed = True
+                            print("✅ 验证码已通过 (准备下一步)")
+                            captcha_verified = True
                             break
-                        # 还没变绿？每秒检查一次
                         time.sleep(1)
                 else:
-                    print("👀 未找到复选框，可能已自动通过...")
-                    captcha_passed = True # 没框通常意味着通过了
-            
-            except Exception as e:
-                print(f"验证码处理异常: {e}")
-            
-            # 截图留证：点 Renew 前，验证码到底过没过？
-            page.screenshot(path="debug_step3_captcha_status.png")
+                    print("⚠️ 无验证码复选框，假设已通过")
+                    captcha_verified = True
+            except:
+                print("⚠️ 验证码加载失败或不存在")
+                # 继续尝试，也许不需要验证码
 
-            # 4. 点击 Renew（仅当验证通过时）
-            if captcha_passed:
-                print("🛑 强制等待 3 秒，确保服务器接收到验证结果...")
-                time.sleep(3)
-                
-                print("4️⃣ 点击最终 Renew 按钮...")
-                
-                # 使用 JS 点击，确保点的是弹窗里的按钮
-                js_click = """() => {
-                    // 找到所有按钮
-                    const btns = Array.from(document.querySelectorAll('button'));
-                    // 筛选出在弹窗(modal)里，且文字包含 Renew 的按钮
-                    const target = btns.find(b => 
-                        b.innerText.includes('Renew') && 
-                        b.closest('.modal-dialog')
-                    );
-                    if(target) { 
-                        target.click(); 
-                        return true; 
-                    }
-                    return false;
-                }"""
-                
-                if not page.evaluate(js_click):
-                    # 如果 JS 没点到，尝试暴力点击最后一个可见的 Renew
-                    print("⚠️ JS未找到按钮，尝试备用点击...")
-                    all_renews = page.get_by_role("button", name="Renew").all()
-                    # 倒序点击（通常弹窗的按钮在 HTML 结构最后面）
-                    for btn in reversed(all_renews):
-                        if btn.is_visible():
-                            btn.click()
-                            break
-                
-                print("✅ 已执行点击操作")
-            else:
-                print("⛔ 验证码未通过！跳过 Renew 点击，避免报错。")
-                send_telegram("❌ 失败：验证码点不亮，GitHub IP 可能被拉黑。")
-                # 强制退出，不执行后续截图
-                exit(1)
+            # 4. 点击最终按钮 (最关键的一步)
+            print("🛑 强制等待 3 秒...")
+            time.sleep(3)
+            
+            print("4️⃣ 点击确认续期 (Final Renew)...")
+            
+            # 截图记录点击前的状态
+            page.screenshot(path="debug_before_click.png")
+            
+            # 使用 JS 强制点击弹窗里的按钮
+            # 这里的逻辑是：找到弹窗里的所有按钮，点击那个包含 Renew 文字的
+            js_script = """() => {
+                const btns = Array.from(document.querySelectorAll('.modal-dialog button'));
+                const target = btns.find(b => b.innerText.includes('Renew'));
+                if(target) { 
+                    target.click(); 
+                    return "Clicked"; 
+                }
+                return "NotFound";
+            }"""
+            
+            click_result = page.evaluate(js_script)
+            print(f"👉 JS点击结果: {click_result}")
+            
+            if click_result == "NotFound":
+                print("⚠️ JS未找到按钮，尝试 Playwright 暴力点击...")
+                page.locator(".modal-footer button").last.click()
 
-            # 5. 结果检查
-            print("5️⃣ 等待结果...")
+            # 5. 结果判定 (严防假成功)
+            print("5️⃣ 等待结果反馈...")
+            # 给服务器 5 秒处理时间
             page.wait_for_timeout(5000)
-            page.screenshot(path="debug_step5_final.png")
+            page.screenshot(path="debug_final_status.png")
+
+            # 判定逻辑：
+            # 1. 如果有红色报错条 -> 失败
+            # 2. 如果弹窗还在 -> 失败 (说明按钮没点上，或者服务器没响应)
+            # 3. 只有弹窗消失了 -> 才算成功
             
-            # 再次检查有没有红条报错
-            if page.locator("text=Please complete the captcha").is_visible():
-                msg = "❌ 失败：点击太快或验证失效 (Please complete the captcha)。"
-            elif "success" in page.content().lower() or "extended" in page.content().lower():
-                msg = "✅ V11 续期成功！"
+            has_error = page.locator(".alert-danger").is_visible() or page.get_by_text("Please complete the captcha").is_visible()
+            is_modal_open = page.locator(".modal-dialog").is_visible()
+            
+            msg = ""
+            if has_error:
+                msg = "❌ 失败：检测到红色报错 (验证码未过或请求被拒)。"
+            elif is_modal_open:
+                msg = "❌ 失败：操作后弹窗未关闭，说明续期按钮点击无效。"
             else:
-                msg = "⚠️ 操作结束，未检测到明确结果，请查看截图。"
+                # 再次检查是否有特定的成功提示条
+                if page.locator(".alert-success").is_visible() or "successfully" in page.content().lower():
+                    msg = "✅ V12 确认成功：弹窗已关闭且检测到成功提示。"
+                else:
+                    # 弹窗关了，但没看见提示条，可能是隐式成功
+                    msg = "✅ V12 疑似成功：弹窗已正常关闭 (未检测到报错)。"
 
             print(msg)
             send_telegram(msg)
@@ -190,6 +182,9 @@ def run():
             err = f"❌ 运行报错: {str(e)}"
             print(err)
             send_telegram(err)
+            try:
+                page.screenshot(path="error_crash.png")
+            except: pass
         finally:
             browser.close()
 
