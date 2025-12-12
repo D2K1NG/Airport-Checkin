@@ -16,7 +16,7 @@ def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
     payload = {
         "chat_id": TG_USER_ID, 
-        "text": f"🤖 VPS续期通知 (V21-CustomTab):\n{msg}", 
+        "text": f"🤖 VPS续期通知 (V22-IframeFix):\n{msg}", 
         "parse_mode": "Markdown"
     }
     try:
@@ -39,7 +39,7 @@ def parse_cookies(cookie_str, domain):
     return cookies
 
 def run():
-    print("🚀 启动 V21 自定义 Tab 序列版...")
+    print("🚀 启动 V22 智能验证版 (Fixed by Gemini)...")
     
     if not COOKIE_STR or not TARGET_URL:
         send_telegram("❌ 致命错误：Secrets 变量缺失")
@@ -67,7 +67,6 @@ def run():
 
         page.add_init_script("""
             Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
         """)
         
         page.set_default_timeout(90000)
@@ -76,20 +75,20 @@ def run():
             # 1. 访问页面
             print(f"1️⃣ 进入页面: {TARGET_URL}")
             page.goto(TARGET_URL, wait_until='domcontentloaded')
-            page.wait_for_timeout(3000)
+            page.wait_for_timeout(5000) # 等待初始加载
 
             # 2. 打开弹窗
             print("2️⃣ 点击 Renew 按钮，触发弹窗...")
             try:
+                # 优先尝试更精准的选择器
                 page.locator('[data-bs-target="#renew-modal"]').click()
             except:
                 page.get_by_text("Renew", exact=True).first.click()
             
-            # --- 等待弹窗和 Cloudflare 加载 ---
-            print("⏳ 弹窗已触发，等待 8 秒让元素就位...")
-            time.sleep(8)
+            # --- 等待弹窗加载 ---
+            print("⏳ 弹窗已触发，等待 Cloudflare 加载...")
+            time.sleep(5)
             
-            # 检查弹窗
             modal = page.locator("#renew-modal")
             if not modal.is_visible():
                 print("❌ 严重错误：弹窗未显示")
@@ -97,43 +96,55 @@ def run():
                 raise Exception("弹窗丢失")
 
             # ==========================================
-            # 核心操作：Tab x2 -> Space -> Wait 10s -> Tab x5 -> Space
+            # 核心修改：使用 Frame Locator 穿透 iframe 点击验证
             # ==========================================
             
-            # A. 设定起始锚点：点击弹窗标题
-            # 这一步是为了让焦点回到弹窗的最顶部，保证接下来的 "Tab x 2" 路径一致
-            print("⚓ 重置焦点到弹窗标题...")
+            print("🤖 正在寻找 Cloudflare 验证框 (Iframe模式)...")
+            
             try:
-                modal.locator(".modal-title").click()
-            except:
-                # 如果点不到标题，就点一下弹窗左上角边缘
-                modal.click(position={"x": 5, "y": 5})
-            time.sleep(0.5)
+                # 1. 找到包含 'challenges' 或 'turnstile' 的 iframe
+                # 这是 Cloudflare 验证码的标准特征
+                cf_iframe = page.frame_locator("iframe[src*='challenges']")
+                
+                # 2. 在 iframe 内部定位元素
+                # 使用你之前提取的 xpath，但在 iframe 上下文中使用
+                print("🎯 尝试点击验证框...")
+                
+                # 设置较短的超时，如果找不到就尝试备用方案
+                try:
+                    cf_iframe.locator("xpath=/html/body//div/div/div[1]/div/label/input").click(timeout=5000)
+                except:
+                    # 如果 input 点不到，尝试点 label（有时候 input 是隐藏的）
+                    cf_iframe.locator("label").first.click(timeout=5000)
+                    
+                print("✅ 已发送点击指令给验证框")
+            except Exception as e:
+                print(f"⚠️ 验证框点击遇到状况 (可能已自动通过或未加载): {str(e)}")
+                # 截图以供调试
+                page.screenshot(path="debug_iframe_error.png")
 
-            # B. 执行第一阶段：选中验证框
-            print("⌨️ 执行：Tab x 2 -> 选中验证框")
-            page.keyboard.press("Tab")
-            time.sleep(0.5)
-            page.keyboard.press("Tab")
-            time.sleep(0.5)
+            # 验证后的强制等待，给 Cloudflare 转圈圈的时间
+            print("⏳ 验证点击后，等待 8 秒...")
+            time.sleep(8)
+
+            # ==========================================
+            # 提交 Renew
+            # ==========================================
             
-            print("👆 按下 Space 激活验证...")
-            page.keyboard.press("Space")
-
-            # C. 中场等待 10 秒
-            print("⏳ 验证激活后，强制等待 10 秒...")
-            time.sleep(10)
-
-            # D. 执行第二阶段：选中 Renew 按钮
-            # 你的逻辑是 Tab 5 次
-            print("⌨️ 执行：Tab x 5 -> 选中 Renew 按钮")
-            for i in range(5):
+            print("🚀 提交 Renew...")
+            # 不再使用 Tab x 5，直接在 modal 里找 Renew 按钮点击
+            try:
+                # 在弹窗 (#renew-modal) 内部寻找文字为 "Renew" 的按钮
+                # 并确保它是可见的
+                renew_btn = modal.locator("button", has_text="Renew").locator("visible=true")
+                renew_btn.click()
+            except Exception as e:
+                print(f"⚠️ 直接点击按钮失败，尝试回退到键盘操作: {e}")
+                # 保底方案：如果上面的找不到，再试一次 Tab 大法
                 page.keyboard.press("Tab")
-                time.sleep(0.3)
-            
-            # E. 确认提交
-            print("🚀 按下 Space 提交 Renew...")
-            page.keyboard.press("Space")
+                page.keyboard.press("Tab")
+                page.keyboard.press("Tab")
+                page.keyboard.press("Space")
             
             # F. 等待结果反馈
             print("⏳ 等待 5 秒查看结果...")
@@ -146,7 +157,7 @@ def run():
             elif page.locator(".alert-danger").is_visible():
                 msg = "❌ 失败：网站提示验证未通过。"
             elif page.locator(".modal-dialog").is_visible():
-                msg = "⚠️ 警告：弹窗未关闭，可能 Tab 次数不对或验证未完成。"
+                msg = "⚠️ 警告：弹窗未关闭，可能是验证没点上或服务器响应慢。"
             else:
                 msg = "✅ 续期可能成功 (弹窗消失)。"
 
