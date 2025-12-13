@@ -4,194 +4,160 @@ import json
 import requests
 from playwright.sync_api import sync_playwright
 
-# ==========================================
-# 👇 环境变量与配置
-# ==========================================
+#Env
 TARGET_URL = os.environ.get("URL")
-COOKIE_JSON = os.environ.get("COOKIE") # 必须包含 auth.json 的内容
-USER_AGENT_STR = os.environ.get("USER_AGENT")
-TG_BOT_TOKEN = os.environ.get("TGBOT")
-TG_USER_ID = os.environ.get("TGUSERID")
-
+COOKIE_JSON = os.environ.get("COOKIE")
+USER_AGENT = os.environ.get("USER_AGENT")
+TG_BOT = os.environ.get("TGBOT")
+TG_USER = os.environ.get("TGUSERID")
 AUTH_FILE = "auth.json"
 
-def send_telegram(message):
-    """发送 TG 通知"""
-    if not TG_BOT_TOKEN or not TG_USER_ID: return
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage",
-            json={"chat_id": TG_USER_ID, "text": f"🤖 Katabump:\n{message}", "parse_mode": "HTML"},
-            timeout=10
-        )
-    except: pass
+def send_tg(msg):
+    if TG_BOT and TG_USER:
+        try:
+            requests.post(f"https://api.telegram.org/bot{TG_BOT}/sendMessage", 
+                          json={"chat_id": TG_USER, "text": msg, "parse_mode": "HTML"}, timeout=5)
+        except: pass
 
-def prepare_auth_file():
+def setup_auth_file():
     """
-    核心修复：处理 Secret 中的 Cookie 并写入 auth.json
-    支持两种格式：
-    1. 标准 Playwright 格式: {"cookies": [...], "origins": [...]}
-    2. 纯列表格式: [{"name": "...", ...}] (自动转换)
+    直接将 Secret 内容写入 auth.json，让 Playwright 原生加载。
+    完美兼容 {"cookies": [], "origins": []} 格式。
     """
     if not COOKIE_JSON:
-        print("⚠️ 警告：未检测到 COOKIE Secret！")
+        print("❌ 错误：未检测到 COOKIE 环境变量")
         return False
-
+    
     try:
+        # 验证一下 JSON 格式是否合法，防止写入坏文件
         data = json.loads(COOKIE_JSON)
-        final_data = data
         
-        # 兼容性修复：如果是列表（[{}, {}]），封装成 Playwright 标准格式
-        if isinstance(data, list):
-            print("ℹ️ 检测到 Cookie 为列表格式，正在封装...")
-            final_data = {"cookies": data, "origins": []}
-        
+        # 写入文件
         with open(AUTH_FILE, 'w') as f:
-            json.dump(final_data, f)
-        
-        print("✅ auth.json 已成功生成！")
+            json.dump(data, f)
+        print("✅ 已将 Secret 写入临时 auth.json 文件")
         return True
     except json.JSONDecodeError:
-        print("❌ COOKIE Secret 格式错误（不是有效的 JSON）！")
-        return False
-    except Exception as e:
-        print(f"❌生成 auth.json 失败: {e}")
+        print("❌ 错误：COOKIE Secret 不是有效的 JSON 格式")
         return False
 
 def run():
-    if not TARGET_URL:
-        print("❌ 缺少 URL 环境变量")
+    print("🚀 启动 (StorageState 加载版)...")
+    
+    # 1. 准备认证文件
+    if not setup_auth_file():
+        send_tg("❌ 脚本停止：Cookie 格式错误或未设置")
         return
 
-    # 1. 准备 Cookie 文件
-    has_cookie = prepare_auth_file()
-
     with sync_playwright() as p:
-        # 启动浏览器
         browser = p.chromium.launch(
-            headless=False, # 必须配合 xvfb
+            headless=False,
             args=['--disable-blink-features=AutomationControlled', '--no-sandbox']
         )
-
-        # 配置上下文
-        context_opts = {
-            'viewport': {'width': 1920, 'height': 1080},
-            'locale': 'en-US', # 建议用英文，避免字符编码问题
-            'device_scale_factor': 1,
-        }
-        if USER_AGENT_STR: 
-            context_opts['user_agent'] = USER_AGENT_STR
         
-        # 🔥 关键：在这里挂载 auth.json
-        if has_cookie and os.path.exists(AUTH_FILE):
-            print("📂 正在挂载 Cookie...")
-            context_opts['storage_state'] = AUTH_FILE
-        else:
-            print("⚠️ 未加载 Cookie，即将以游客身份访问（可能会跳转登录页）")
+        # 2. 直接从文件加载上下文 (包含 Cookie 和 LocalStorage)
+        # 这是最稳的方式，因为它会恢复 Cloudflare 的挑战 Token
+        try:
+            context = browser.new_context(
+                storage_state=AUTH_FILE,
+                viewport={'width': 1920, 'height': 1080},
+                user_agent=USER_AGENT or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+            print("📂 已加载 Storage State (Cookie & LocalStorage)")
+        except Exception as e:
+            print(f"⚠️ 加载 auth.json 失败: {e}")
+            context = browser.new_context()
 
-        context = browser.new_context(**context_opts)
         page = context.new_page()
-        
-        # 防检测注入
-        page.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
-        page.set_default_timeout(40000) # 40秒超时
+        page.set_default_timeout(45000)
 
+        # 3. 访问
         print(f"👉 访问: {TARGET_URL}")
         try:
-            page.goto(TARGET_URL, wait_until='networkidle') # 等待网络空闲，确保加载完成
-        except Exception as e:
-            print(f"⚠️ 页面加载超时: {e}")
-
-        page.wait_for_timeout(3000)
-
-        # 2. 登录状态检测 (如果跳转到了 login，直接报错，不再尝试账号密码登录)
-        if "login" in page.url or page.locator("input[type='password']").is_visible():
-            err_msg = "❌ Cookie 无效或已过期！已跳转至登录页。\n请更新 GitHub Secret 中的 COOKIE 值。"
-            print(err_msg)
-            
-            # 截图留证
-            page.screenshot(path="login_failed.png")
-            print("📸 已截图: login_failed.png")
-            
-            send_telegram(err_msg)
-            browser.close()
-            return # ⛔️ 终止运行，不输入账号密码
-
-        print("✅ Cookie 有效，已在 Dashboard 页面。")
-
-        # 3. 寻找 Renew 按钮
-        renew_btn = None
-        # 尝试几种定位器
-        if page.locator('[data-bs-target="#renew-modal"]').is_visible():
-            renew_btn = page.locator('[data-bs-target="#renew-modal"]')
-        elif page.get_by_text("Renew", exact=True).is_visible():
-            renew_btn = page.get_by_text("Renew", exact=True)
+            page.goto(TARGET_URL, wait_until='domcontentloaded')
+        except: pass
         
-        if not renew_btn:
-            print("ℹ️ 未找到可见的 Renew 按钮 (可能不需要续期)。")
+        page.wait_for_timeout(5000)
+
+        # 4. 登录检查
+        if "login" in page.url or page.locator("input[name='email']").is_visible():
+            print("❌ 依然跳转到了登录页！")
+            print("💡 分析：可能是缺少 cf_clearance Cookie 导致被 CF 拦截，或者 Session 已过期。")
+            page.screenshot(path="login_fail.png")
+            send_tg("❌ 失败：Cookie 无效，无法免登。请尝试重新提取包含 cf_clearance 的完整 Cookie。")
             browser.close()
             return
 
-        print("🖱️ 点击 Renew 按钮...")
+        print("✅ 免登成功！寻找 Renew 按钮...")
+
+        # 5. 点击 Renew
+        # 尝试多种定位方式
+        renew_btn = None
+        if page.get_by_text("Renew", exact=True).count() > 0:
+             renew_btn = page.get_by_text("Renew", exact=True).first
+        elif page.locator('[data-bs-target="#renew-modal"]').count() > 0:
+             renew_btn = page.locator('[data-bs-target="#renew-modal"]').first
+        
+        if not renew_btn:
+            print("ℹ️ 未找到 Renew 按钮")
+            browser.close()
+            return
+
         renew_btn.click()
+        print("⏳ 弹窗已打开，寻找验证码 Iframe...")
+        time.sleep(5)
 
-        # 4. 处理弹窗与焦点 (重点修复)
-        print("⏳ 等待弹窗加载 (15s)...")
-        time.sleep(15) # 给 Cloudflare iframe 加载的时间
-
+        # 6. Iframe 穿透点击 (Cloudflare 验证)
         try:
-            # 🔥 修复焦点逻辑：点击弹窗标题或边缘，而不是正文
-            # 这里的 .modal-content 是 Bootstrap 标准弹窗容器
-            print("🔒 正在锁定焦点到弹窗内部...")
+            # 查找可能是 CF 的 iframe
+            target_frame = None
+            for frame in page.frames:
+                # Cloudflare 验证码通常包含这些关键词
+                if "cloudflare" in frame.url or "turnstile" in frame.url:
+                    target_frame = frame
+                    print(f"✅ 锁定验证 iframe: {frame.url}")
+                    break
             
-            modal = page.locator("#renew-modal .modal-content")
-            if modal.is_visible():
-                # 点击弹窗左上角空白处，确保焦点进入弹窗层级
-                modal.click(position={"x": 20, "y": 20})
+            if target_frame:
+                # 尝试点击 iframe 里的 checkbox
+                box = target_frame.locator("input[type='checkbox']")
+                body = target_frame.locator("body")
+                
+                if box.count() > 0:
+                    print("🖱️ 点击验证 Checkbox...")
+                    box.click(timeout=2000)
+                else:
+                    print("🖱️ Checkbox 未找到，点击 Iframe Body...")
+                    body.click(timeout=2000)
+                
+                time.sleep(3)
             else:
-                print("⚠️ 警告：找不到 #renew-modal 元素")
-            
-            time.sleep(1)
+                print("⚠️ 未找到特定的验证 iframe，尝试盲点弹窗中心...")
+                # 备用方案：点击屏幕中央（假设弹窗在中间）
+                page.mouse.click(960, 540)
+                time.sleep(1)
 
-            # 🎹 键盘 TAB 连招
-            # 通常 Cloudflare 在 iframe 里，Tab 次数不确定，我们尝试多按几次
-            print("⌨️ 开始 Tab 尝试选中验证码...")
-            
-            for i in range(1, 4):
-                print(f"   Tab {i}...")
-                page.keyboard.press("Tab")
-                time.sleep(0.5)
-
-            print("⌨️ 按下 SPACE (空格) 尝试激活验证...")
-            page.keyboard.press("Space")
-            
-            # 再等一会，看验证是否通过
-            time.sleep(5)
-
-            # 提交逻辑
-            print("🚀 尝试提交...")
-            submit_btn = page.locator("#renew-modal button.btn-primary")
-            if submit_btn.is_visible():
-                submit_btn.click()
+            # 7. 提交
+            print("🚀 提交续期...")
+            btn = page.locator("#renew-modal button.btn-primary")
+            if btn.is_visible():
+                btn.click()
             else:
                 page.keyboard.press("Enter")
 
-            # 结果验证
             time.sleep(5)
-            if page.locator(".alert-success").is_visible() or page.get_by_text("success").is_visible():
-                msg = "✅✅✅ 续期成功！"
-                print(msg)
-                send_telegram(msg)
+            page.screenshot(path="result.png")
+            
+            # 检查成功标志
+            if page.locator(".alert-success").is_visible() or "success" in page.content().lower():
+                print("✅ 续期成功！")
+                send_tg("✅ Katabump 续期成功！")
             else:
-                # 再次截图查看最后状态
-                page.screenshot(path="result_check.png")
-                print("⚠️ 未检测到明确成功信号，已截图 result_check.png")
-                send_telegram("⚠️ 脚本执行完毕，未检测到成功提示，请检查。")
+                print("❓ 流程结束，请查看截图确认结果")
 
         except Exception as e:
-            err = f"❌ 交互流程出错: {e}"
-            print(err)
-            send_telegram(err)
+            print(f"❌ 交互错误: {e}")
+            send_tg(f"❌ 运行出错: {e}")
 
         browser.close()
 
