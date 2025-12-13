@@ -12,26 +12,28 @@ jobs:
     runs-on: ubuntu-latest
     
     # 设置超时防止卡死
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.10'
 
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
+        # 确保安装 playwright 和 requests
         pip install -r requirements.txt
 
-    - name: Install Playwright Browsers
+    - name: Install Playwright Browsers (修复找不到命令问题)
       run: |
-        playwright install chromium
-        playwright install-deps
+        # 显式使用 python -m 调用 playwright，确保找到命令
+        python -m playwright install chromium
+        python -m playwright install-deps
 
     - name: Run Auto Renew Script
       env:
@@ -44,7 +46,7 @@ jobs:
         AUTH_JSON: ${{ secrets.AUTH_JSON }}
       run: python main.py
 
-    - name: Upload Videos & Screenshots
+    - name: Upload Videos, Screenshots & Auth File
       # 无论成功失败，都上传录屏和截图供检查
       if: always()
       uses: actions/upload-artifact@v4
@@ -53,5 +55,5 @@ jobs:
         path: |
           videos/
           *.png
-          auth.json
-        retention-days: 3
+          auth.json # 上传 auth.json 让你能看到新的 cookie 是否保存成功
+        retention-days: 7
