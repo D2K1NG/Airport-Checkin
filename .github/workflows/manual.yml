@@ -1,8 +1,11 @@
 name: Katabump Auto Renew
 
 on:
+  # 1. 定时触发：UTC 0:30 (北京时间 08:30)
   schedule:
     - cron: '30 0 * * *'
+  
+  # 2. 手动触发
   workflow_dispatch:
 
 jobs:
@@ -10,47 +13,54 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout code
+    - name: Checkout code (拉取代码)
       uses: actions/checkout@v4
 
-    - name: Set up Python
+    - name: Set up Python (安装 Python)
       uses: actions/setup-python@v5
       with:
         python-version: '3.10'
 
-    - name: Install dependencies
+    - name: Install dependencies (安装依赖)
       run: |
+        python -m pip install --upgrade pip
         pip install playwright requests
+        # 安装 Playwright 浏览器和系统依赖
         playwright install chromium
         playwright install-deps
 
-    # 1. 尝试恢复上次运行的 Cache (优先级最高)
+    # Step 1: 尝试恢复缓存
+    # 如果有旧的 auth.json，这里会下载下来；如果没有，Python 脚本会用 Secret 生成
     - name: Restore Cookie Cache
       uses: actions/cache@v4
       with:
         path: auth.json
-        # 使用简单的 key，每次都尝试匹配最新的
+        # 使用 run_id 作为 key 前缀，确保每次尽量保存新的
         key: auth-cookie-${{ github.run_id }}
         restore-keys: |
           auth-cookie-
 
-    # 2. 运行脚本
-    # 逻辑：如果 Cache 里没有 auth.json，Python 脚本会去读取 COOKIE Secret 生成一个。
+    # Step 2: 运行脚本
     - name: Run Script
       env:
-        COOKIE: ${{ secrets.COOKIE }}  # 👈 关键：注入 Secret
-        GMAIL: ${{ secrets.GMAIL }}
-        KATAMIMA: ${{ secrets.KATAMIMA }}
+        # 👇 核心变量
+        URL: ${{ secrets.URL }}
+        COOKIE: ${{ secrets.COOKIE }} 
+        
+        # 👇 辅助变量 (通知与伪装)
         TGBOT: ${{ secrets.TGBOT }}
         TGUSERID: ${{ secrets.TGUSERID }}
-        URL: ${{ secrets.URL }}
         USER_AGENT: ${{ secrets.USER_AGENT }}
+        
+        # ❌ 已移除 GMAIL/KATAMIMA，确保完全依赖 Cookie
       run: |
+        # 使用 xvfb 模拟显示器，解决 headless=False 问题
         xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" python main.py
 
-    # 3. 保存最新的 auth.json 到 Cache (供下次使用)
+    # Step 3: 保存最新的 auth.json 到缓存
+    # 下次运行时，会优先读取这个缓存文件
     - name: Save Cookie Cache
-      if: always()
+      if: always()  # 即使脚本报错（只要文件还在）也尝试保存
       uses: actions/cache/save@v4
       with:
         path: auth.json
