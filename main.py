@@ -4,13 +4,12 @@ import os
 import requests
 from playwright.sync_api import sync_playwright
 
-# ================= 配置区域 =================
+#Env
 TARGET_URL = os.environ.get("URL")
 COOKIE_STR = os.environ.get("COOKIE") 
 USER_AGENT = os.environ.get("USER_AGENT")
 TG_BOT = os.environ.get("TGBOT")
 TG_USER = os.environ.get("TGUSERID")
-# ===========================================
 
 def send_tg(msg):
     if TG_BOT and TG_USER:
@@ -34,81 +33,38 @@ def parse_cookie_string(raw_str):
             except: continue
     return cookies
 
-def human_press(page, key):
-    """
-    🤖 拟人化按键：增加物理延迟
-    Cloudflare 会检测按键的 keydown 和 keyup 之间的时间差
-    """
-    hold = random.uniform(0.08, 0.2) # 模拟人手按下的时长
-    print(f"⌨️ 拟人按下 {key} (停顿 {hold:.2f}s)...")
-    page.keyboard.down(key)
-    time.sleep(hold)
-    page.keyboard.up(key)
-
-def apply_native_stealth(page):
-    """
-    🛡️ 原生 JS 伪装注入 (无需安装 playwright-stealth 库)
-    彻底解决 ImportError 问题，同时移除 webdriver 指纹
-    """
-    page.add_init_script("""
-        // 1. 移除 webdriver 属性
-        Object.defineProperty(navigator, 'webdriver', {
-            get: () => undefined
-        });
-
-        // 2. 伪造插件列表 (Headless 默认是空的，这很容易暴露)
-        Object.defineProperty(navigator, 'plugins', {
-            get: () => [1, 2, 3, 4, 5]
-        });
-
-        // 3. 伪造 WebGL 厂商 (防止被识别为虚拟显卡)
-        const getParameter = WebGLRenderingContext.prototype.getParameter;
-        WebGLRenderingContext.prototype.getParameter = function(parameter) {
-            if (parameter === 37445) return 'Intel Open Source Technology Center';
-            if (parameter === 37446) return 'Mesa DRI Intel(R) Ivybridge Mobile';
-            return getParameter(parameter);
-        };
-        
-        // 4. 欺骗权限查询
-        const originalQuery = window.navigator.permissions.query;
-        window.navigator.permissions.query = (parameters) => (
-            parameters.name === 'notifications' ?
-            Promise.resolve({ state: 'granted', kind: 'permission', onchange: null }) :
-            originalQuery(parameters)
-        );
-    """)
+def apply_stealth(page):
+    """最基础的特征去除，防止一打开就被ban"""
+    page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+    page.add_init_script("Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})")
 
 def run():
-    print("🚀 启动 (原生伪装 + 严格Tab流程)...")
+    print("🚀 启动 (坐标暴力点击版)...")
     os.makedirs("videos", exist_ok=True)
 
     if not TARGET_URL or not COOKIE_STR:
-        print("❌ 错误：环境变量未设置")
+        print("❌ 错误：变量未设置")
         return
 
     parsed_cookies = parse_cookie_string(COOKIE_STR)
 
     with sync_playwright() as p:
-        # 启动参数：模拟真实显示器环境
+        # 启动参数
         browser = p.chromium.launch(
             headless=False,
             args=[
-                '--disable-blink-features=AutomationControlled', 
-                '--no-sandbox', 
-                '--disable-infobars',
-                '--window-size=1920,1080',
-                '--mute-audio'
+                '--disable-blink-features=AutomationControlled',
+                '--no-sandbox',
+                '--window-size=1920,1080'
             ]
         )
         
-        # 强制指定 Windows Chrome User-Agent
-        real_ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+        # 使用真实 Windows UA
+        ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
         
         context = browser.new_context(
             viewport={'width': 1920, 'height': 1080},
-            user_agent=USER_AGENT or real_ua,
-            locale="en-US",
-            timezone_id="America/New_York",
+            user_agent=USER_AGENT or ua,
             record_video_dir="videos/",
             record_video_size={"width": 1920, "height": 1080}
         )
@@ -116,10 +72,7 @@ def run():
         try:
             context.add_cookies(parsed_cookies)
             page = context.new_page()
-            
-            # 🔥 注入原生伪装 (关键修复)
-            apply_native_stealth(page)
-            
+            apply_stealth(page)
             page.set_default_timeout(60000)
 
             print(f"👉 访问: {TARGET_URL}")
@@ -128,12 +81,12 @@ def run():
             except: pass
             page.wait_for_timeout(5000)
 
-            if "login" in page.url or page.locator("input[name='email']").is_visible():
-                print("❌ Cookie 失效")
-                page.screenshot(path="login_failed.png")
+            if "login" in page.url:
+                print("❌ Cookie失效")
+                page.screenshot(path="login_fail.png")
                 return
 
-            # --- Renew 流程 ---
+            # --- Renew ---
             renew_btn = None
             if page.get_by_text("Renew", exact=True).count() > 0:
                  renew_btn = page.get_by_text("Renew", exact=True).first
@@ -141,49 +94,67 @@ def run():
                  renew_btn = page.locator('[data-bs-target="#renew-modal"]').first
             
             if renew_btn:
-                print("🖱️ 点击 Renew 按钮...")
+                print("🖱️ 点击 Renew...")
                 renew_btn.click()
                 
-                # 严格遵守你的要求：死等 15 秒
-                print("⏳ (1/3) 严格等待 15 秒...")
-                time.sleep(15)
+                print("⏳ 等待弹窗和验证码加载 (10秒)...")
+                time.sleep(10)
 
                 # ==========================================
-                # 👇 拟人化操作开始
+                # 👇 核心：寻找 Iframe 并计算坐标点击
                 # ==========================================
                 
-                # 1. 鼠标假装无意划过 (增加可信度)
-                print("🖱️ 鼠标随机微动 (模拟真人)...")
-                page.mouse.move(random.randint(200, 500), random.randint(200, 500))
-                time.sleep(0.5)
-                page.mouse.move(random.randint(600, 900), random.randint(400, 600))
+                print("🔍 正在定位 Cloudflare Iframe...")
+                
+                # 1. 寻找页面中所有 iframe
+                target_frame_element = None
+                
+                # Cloudflare 的 iframe 域名通常包含 challenges 或 turnstile
+                # 我们通过定位器找到这个 iframe 元素
+                cf_iframe_locator = page.locator("iframe[src*='challenges'], iframe[src*='turnstile']")
+                
+                if cf_iframe_locator.count() > 0:
+                    target_frame_element = cf_iframe_locator.first
+                    print("✅ 找到了验证码 Iframe！")
+                else:
+                    print("⚠️ 没找到特定 iframe，尝试寻找所有 iframe...")
+                    frames = page.locator("iframe")
+                    if frames.count() > 0:
+                        target_frame_element = frames.first
+                
+                # 2. 如果找到了，计算它的坐标
+                if target_frame_element:
+                    # 获取 iframe 在屏幕上的位置 (x, y, width, height)
+                    box = target_frame_element.bounding_box()
+                    
+                    if box:
+                        center_x = box['x'] + (box['width'] / 2)
+                        # Cloudflare 的 checkbox 通常在 iframe 垂直居中偏左一点，或者正中间
+                        # 我们稍微加一点随机偏移，防止太死板
+                        center_y = box['y'] + (box['height'] / 2)
+                        
+                        print(f"🎯 锁定坐标: X={center_x}, Y={center_y}")
+                        
+                        # 3. 移动鼠标过去
+                        print("🖱️ 鼠标移动过去...")
+                        page.mouse.move(center_x, center_y, steps=20) # steps=20 让移动有轨迹，不是瞬移
+                        time.sleep(0.5)
+                        
+                        # 4. 物理点击
+                        print("🖱️ 点击！")
+                        page.mouse.down()
+                        time.sleep(random.uniform(0.1, 0.3)) # 按住一会
+                        page.mouse.up()
+                        
+                        print("⏳ 点击完成，等待验证变绿 (8秒)...")
+                        time.sleep(8)
+                    else:
+                        print("❌ 无法获取 Iframe 坐标")
+                else:
+                    print("❌ 根本没找到 Iframe 元素，无法点击")
+                    # 只有在这里我们才尝试盲点屏幕中间，作为最后的挣扎
+                    page.mouse.click(960, 500)
 
-                # 2. 点击文本锁定焦点 (你的核心要求)
-                print("🔒 点击弹窗文本锁定焦点...")
-                try:
-                    # 尝试点击具体的说明文本
-                    page.get_by_text("This will extend").first.click(force=True)
-                except:
-                    # 备用：点击弹窗主体
-                    page.locator("#renew-modal .modal-body").click(force=True, position={"x":10, "y":10})
-                
-                time.sleep(1)
-
-                print("⌨️ 执行键盘流: Tab x2 -> Space")
-                
-                # Tab 1
-                human_press(page, "Tab")
-                time.sleep(random.uniform(0.6, 1.2)) # 随机间隔
-                
-                # Tab 2
-                human_press(page, "Tab")
-                time.sleep(random.uniform(0.6, 1.2))
-                
-                # Space (带物理延迟的按下)
-                human_press(page, "Space")
-                
-                print("⏳ 验证码勾选动作完成，等待 6 秒...")
-                time.sleep(6)
                 # ==========================================
 
                 # 提交
@@ -196,24 +167,24 @@ def run():
 
                 time.sleep(5)
                 
-                if page.locator(".alert-success").is_visible() or "success" in page.content().lower():
-                    print("✅✅✅ 续期成功！")
-                    send_tg("✅ Katabump 续期成功！")
+                if page.locator(".alert-success").is_visible():
+                    print("✅✅✅ 成功！")
+                    send_tg("✅ 续期成功！")
                 elif page.get_by_text("Please complete the captcha").is_visible():
-                    print("❌ 失败：Cloudflare 验证未通过 (按键已模拟，但仍被拦截)")
-                    send_tg("❌ 失败：CF 验证未通过")
+                    print("❌ 失败：验证码没点中，或被拦截")
+                    send_tg("❌ 失败：验证码问题")
+                    page.screenshot(path="captcha_fail.png")
                 else:
-                    print("❓ 结果未知，请查看录像")
+                    print("❓ 未知结果")
+                    page.screenshot(path="unknown.png")
 
             else:
                 print("ℹ️ 未找到 Renew 按钮")
 
         except Exception as e:
-            print(f"❌ 运行出错: {e}")
-            send_tg(f"❌ 脚本出错: {e}")
-        
+            print(f"❌ 错误: {e}")
         finally:
-            print("\n💾 保存录像...")
+            print("💾 保存录像...")
             try:
                 context.close()
                 browser.close()
