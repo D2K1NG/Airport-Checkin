@@ -6,7 +6,7 @@ import requests
 from playwright.sync_api import sync_playwright
 
 # ==========================================
-# 👇 环境变量配置 (V38 容错版) 👇
+# 👇 环境变量配置 👇
 # ==========================================
 URL = os.environ.get("URL") 
 GMAIL = os.environ.get("GMAIL")
@@ -29,7 +29,7 @@ def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
     payload = {
         "chat_id": TG_USER_ID,
-        "text": f"🤖 **VPS 续期助手 (V38)**\n\n{msg}",
+        "text": f"🤖 **VPS 续期助手 (V39)**\n\n{msg}",
         "parse_mode": "Markdown"
     }
     try:
@@ -59,12 +59,11 @@ def parse_cookie_str(cookie_str, domain):
 # ==========================================
 
 def run():
-    print("🚀 启动 V38 (增加重定向自动修复功能)...")
+    print("🚀 启动 V39 (登录页兜底策略)...")
 
     if not URL:
         print("❌ 错误：未检测到 URL 环境变量！")
         sys.exit(1)
-        
     if not GMAIL or not KATAMIMA:
         print("❌ 错误：缺少 GMAIL 或 KATAMIMA 环境变量")
         sys.exit(1)
@@ -96,47 +95,46 @@ def run():
 
         if COOKIE_STR:
             print("🍪 注入 Secret 中的 Cookie...")
-            cookies = parse_cookie_str(COOKIE_STR, domain)
-            context.add_cookies(cookies)
+            context.add_cookies(parse_cookie_str(COOKIE_STR, domain))
         
         page = context.new_page()
         page.set_default_timeout(60000)
 
-        # --- 🛡️ 核心修复：稳健导航模块 ---
-        print(f"👉 前往目标页面 (URL 已隐藏)")
+        # --- 🛡️ V39 核心：智能导航策略 ---
+        print(f"👉 尝试访问目标页面 (URL 已隐藏)")
         try:
             page.goto(URL, wait_until='domcontentloaded')
         except Exception as e:
-            error_str = str(e)
-            # 捕获 "重定向过多" 错误
-            if "ERR_TOO_MANY_REDIRECTS" in error_str:
-                print(f"⚠️ 捕获重定向死循环，说明 Cookie 已失效！")
-                print("🧹 正在清除 Cookie 并重试...")
-                
-                # 关键步骤：清除烂掉的 Cookie
-                context.clear_cookies()
-                
-                # 重新尝试访问（这次应该会正常跳转到登录页，而不会死循环）
-                try:
-                    page.goto(URL, wait_until='domcontentloaded')
-                    print("🔄 重试导航成功！")
-                except Exception as retry_e:
-                    msg = f"❌ 重试依然失败: {retry_e}"
-                    print(msg)
-                    send_telegram(msg)
-                    sys.exit(1)
-            else:
-                # 其他错误（如断网）直接抛出
-                raise e
+            # 只要访问目标页报错 (无论是重定向死循环，还是 chromewebdata 错误)
+            # 我们就放弃目标页，改去登录页！
+            print(f"⚠️ 访问目标页失败 ({str(e)})")
+            print("🛡️ 策略切换：Cookie 已失效且硬闯失败，转为【直连登录页】...")
+            
+            # 1. 彻底清除旧 Cookie
+            context.clear_cookies()
+            
+            # 2. 显式前往登录页 (不再去碰那个报错的 URL)
+            login_url = "https://dashboard.katabump.com/auth/login"
+            print(f"👉 前往登录页: {login_url}")
+            
+            try:
+                page.goto(login_url, wait_until='domcontentloaded')
+            except Exception as login_e:
+                msg = f"❌ 连登录页都打不开，网站可能挂了: {login_e}"
+                print(msg)
+                send_telegram(msg)
+                sys.exit(1)
         
-        page.wait_for_timeout(5000)
+        page.wait_for_timeout(3000)
 
-        # 2. 检查登录状态
+        # 2. 统一登录处理
+        # 此时页面可能是目标页 (Cookie有效)，也可能是登录页 (Cookie失效后跳转过来的)
         is_login_page = "login" in page.url or page.locator("#email").is_visible()
         
         if is_login_page:
-            print("🛑 需要登录，切换至密码模式...")
-            context.clear_cookies() #以此确保环境干净
+            print("🛑 当前在登录页，执行密码登录...")
+            # 再次确保环境干净
+            context.clear_cookies() 
             
             try:
                 page.fill("#email", GMAIL)
@@ -147,22 +145,24 @@ def run():
                 print("👆 点击登录...")
                 page.click("#submit")
                 
-                # 等待跳转，容错时间加长
+                # 等待跳转
                 page.wait_for_url(lambda u: "login" not in u, timeout=40000)
                 print("✅ 密码登录成功！")
                 
+                # 登录成功后，才再次尝试去目标页面
                 if "servers/edit" not in page.url:
+                    print(f"👉 登录完成，跳转回目标 URL...")
                     page.goto(URL)
                     page.wait_for_timeout(5000)
                     
             except Exception as e:
-                err = f"❌ 登录失败: {str(e)}"
+                err = f"❌ 登录过程失败: {str(e)}"
                 print(err)
                 send_telegram(err)
                 page.screenshot(path="login_error.png")
                 context.close(); browser.close(); sys.exit(1)
         else:
-            print("✅ Cookie 有效，直接进入后台！")
+            print("✅ 直接进入了后台，无需登录！")
 
         # 3. Renew 流程
         print("🤖 寻找 Renew 按钮...")
@@ -189,15 +189,23 @@ def run():
         # 4. 解决验证码 (iframe 优先)
         print("⚡ 开始验证 (寻找 Cloudflare iframe)...")
         try:
+            # 寻找包含 challenges 的 iframe
             cf_frame = page.frame_locator("iframe[src*='challenges']").first
+            # 等待 iframe 里的 body 出现
             if cf_frame.locator("body").is_visible():
-                print("🖱️ 找到验证码 iframe，点击中心...")
-                cf_frame.locator("body").click(timeout=5000)
-                time.sleep(5)
+                print("🖱️ 找到验证码 iframe，点击其中心区域...")
+                # 强制点击 iframe 里的 body
+                cf_frame.locator("body").click(force=True, timeout=5000)
+                time.sleep(2)
+                # 再点一下 checkbox (如果有具体的 id 更好，但 body 通常能触发)
+                try:
+                    cf_frame.locator("input[type='checkbox']").click(force=True, timeout=2000)
+                except:
+                    pass
             else:
-                raise Exception("iframe not visible")
+                raise Exception("iframe body not visible")
         except Exception as e:
-            print(f"⚠️ iframe 点击失败，切换到坐标打击...")
+            print(f"⚠️ iframe 点击失败，尝试备用方案 (坐标点击)...")
             try:
                 ref_text = page.locator("#renew-modal").get_by_text("Captcha", exact=True).first
                 if not ref_text.is_visible():
@@ -222,12 +230,13 @@ def run():
         print("🚀 提交 Renew...")
         try:
             renew_submit = page.locator("#renew-modal button.btn-primary", has_text="Renew")
-            if renew_submit.is_enabled():
-                renew_submit.click()
-            else:
+            # 检查是否可点击
+            if renew_submit.is_visible():
                 renew_submit.click(force=True)
+            else:
+                page.keyboard.press("Enter")
         except:
-            page.keyboard.press("Enter")
+            pass
 
         print("⏳ 等待结果...")
         time.sleep(5)
