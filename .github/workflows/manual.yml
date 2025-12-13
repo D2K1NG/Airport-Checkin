@@ -1,48 +1,57 @@
-name: Katabump Auto Renew
+name: VPS Auto Renew
 
 on:
   schedule:
-    - cron: '30 0 * * *'
-  workflow_dispatch:
+    # 北京时间每天上午 9 点运行 (UTC时间 1:00)
+    # 你可以根据需要调整 cron 表达式
+    - cron: '0 1 * * *'
+  workflow_dispatch: # 允许手动点按钮运行
 
 jobs:
-  run_script:
+  renew:
     runs-on: ubuntu-latest
     
+    # 设置超时防止卡死
+    timeout-minutes: 10
+
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v3
 
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v4
       with:
         python-version: '3.10'
 
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        # 安装 undetected-chromedriver 和 selenium
         pip install -r requirements.txt
-        # 确保 Chrome 存在 (Ubuntu-latest 通常自带，但以此确保)
-        sudo apt-get update
-        sudo apt-get install -y google-chrome-stable
 
-    - name: Run Script
-      env:
-        URL: ${{ secrets.URL }}
-        COOKIE: ${{ secrets.COOKIE }} 
-        TGBOT: ${{ secrets.TGBOT }}
-        TGUSERID: ${{ secrets.TGUSERID }}
-        # Selenium 不需要 USER_AGENT 变量，它使用真实的 Chrome 指纹
+    - name: Install Playwright Browsers
       run: |
-        # 使用 xvfb 运行 Python，模拟真实显示器环境
-        # 这是绕过 Cloudflare 检测的关键步骤之一
-        xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" python main.py
-        
-    - name: Upload Artifacts (Screenshots)
+        playwright install chromium
+        playwright install-deps
+
+    - name: Run Auto Renew Script
+      env:
+        # 这里映射你在 GitHub Secrets 中填写的变量
+        URL: ${{ secrets.URL }}
+        GMAIL: ${{ secrets.GMAIL }}
+        KATAMIMA: ${{ secrets.KATAMIMA }}
+        TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+        TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        AUTH_JSON: ${{ secrets.AUTH_JSON }}
+      run: python main.py
+
+    - name: Upload Videos & Screenshots
+      # 无论成功失败，都上传录屏和截图供检查
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: debug-screenshots
+        name: run-evidence
         path: |
-          debug_screenshots/
+          videos/
+          *.png
+          auth.json
+        retention-days: 3
