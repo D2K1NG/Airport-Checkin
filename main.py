@@ -1,202 +1,215 @@
 import time
-import random
 import os
+import json
 import requests
-import undetected_chromedriver as uc
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.common.action_chains import ActionChains
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+from playwright.sync_api import sync_playwright
 
-# ================= 配置区域 =================
+# ==========================================
+# 👇👇👇 配置区域 (自动从GitHub Secrets读取) 👇👇👇
+# ==========================================
+# 必须在GitHub Secrets中设置这些变量
 TARGET_URL = os.environ.get("URL")
-COOKIE_STR = os.environ.get("COOKIE")
-TGBOT = os.environ.get("TGBOT")
-TG_USER = os.environ.get("TGUSERID")
-# ===========================================
+EMAIL = os.environ.get("GMAIL")
+PASSWORD = os.environ.get("KATAMIMA")
 
-def send_tg(msg):
-    if TGBOT and TG_USER:
+# 可选：TG通知配置
+TG_BOT_TOKEN = os.environ.get("TG_BOT_TOKEN")
+TG_CHAT_ID = os.environ.get("TG_CHAT_ID")
+
+# 可选：将 auth.json 的全部内容复制到名为 AUTH_JSON 的 Secret 中
+AUTH_JSON_CONTENT = os.environ.get("AUTH_JSON")
+
+AUTH_FILE = "auth.json"
+VIDEO_DIR = "videos/"
+
+# ==========================================
+
+def send_tg(message):
+    """发送Telegram通知"""
+    if not TG_BOT_TOKEN or not TG_CHAT_ID:
+        print("⚠️ 未配置 TG 通知，跳过。")
+        return
+    try:
+        url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage"
+        data = {"chat_id": TG_CHAT_ID, "text": message}
+        requests.post(url, data=data)
+        print("📢 TG 通知已发送")
+    except Exception as e:
+        print(f"❌ TG 发送失败: {e}")
+
+def restore_auth_from_secret():
+    """从Secret恢复Cookie文件"""
+    if AUTH_JSON_CONTENT:
+        print("📂 检测到 AUTH_JSON Secret，正在写入文件...")
         try:
-            requests.post(f"https://api.telegram.org/bot{TGBOT}/sendMessage", 
-                          json={"chat_id": TG_USER, "text": msg, "parse_mode": "HTML"}, timeout=5)
+            with open(AUTH_FILE, "w", encoding='utf-8') as f:
+                f.write(AUTH_JSON_CONTENT)
+            print("✅ Cookie 文件恢复成功！")
         except Exception as e:
-            print(f"TG 推送失败: {e}")
-
-def parse_cookie_string(raw_str):
-    """解析 Cookie 字符串为 Selenium 格式"""
-    if not raw_str: return []
-    cookies = []
-    items = raw_str.split(';')
-    for item in items:
-        if '=' in item:
-            try:
-                name, value = item.strip().split('=', 1)
-                cookies.append({
-                    'name': name,
-                    'value': value,
-                    'domain': 'dashboard.katabump.com', # 必须指定域名，否则 Selenium 会报错
-                    'path': '/'
-                })
-            except: continue
-    return cookies
-
-def human_type_keys(driver, keys_list):
-    """
-    🤖 拟人化按键：Selenium 版本
-    """
-    actions = ActionChains(driver)
-    for key in keys_list:
-        delay = random.uniform(0.1, 0.3)
-        print(f"⌨️ 按下 {key} (延迟 {delay:.2f}s)...")
-        actions.send_keys(key)
-        actions.pause(delay)
-    actions.perform()
+            print(f"❌ Cookie 文件写入失败: {e}")
 
 def run():
-    print("🚀 启动 (undetected_chromedriver 模式)...")
-    
-    # 确保截图目录存在
-    os.makedirs("debug_screenshots", exist_ok=True)
+    print("🚀 启动 GitHub Actions 自动化脚本...")
 
-    if not TARGET_URL or not COOKIE_STR:
-        print("❌ 错误：环境变量未设置")
+    if not EMAIL or not PASSWORD or not TARGET_URL:
+        err_msg = "❌ 错误：GitHub Secrets 环境变量未设置 (GMAIL, KATAMIMA, URL)！"
+        print(err_msg)
+        send_tg(err_msg)
         return
 
-    # 配置 Chrome 选项
-    options = uc.ChromeOptions()
-    options.add_argument("--no-first-run")
-    options.add_argument("--no-service-autorun")
-    options.add_argument("--password-store=basic")
-    # ⚠️ 绝对不要开启 --headless，这是被 CF 检测的主要原因
-    # 我们将在 GitHub Actions 中使用 xvfb 来提供虚拟显示环境
+    # 尝试恢复 Cookie
+    restore_auth_from_secret()
 
-    try:
-        # 启动浏览器 (use_subprocess=True 可提高稳定性)
-        driver = uc.Chrome(options=options, use_subprocess=True, version_main=None)
-        driver.set_window_size(1920, 1080)
+    with sync_playwright() as p:
+        # ⚠️ GitHub Action 必须使用 headless=True
+        print("启动浏览器 (Headless模式 + 视频录制)...")
+        browser = p.chromium.launch(
+            headless=True, 
+            args=['--disable-blink-features=AutomationControlled', '--no-sandbox']
+        )
+
+        # 配置录屏和视口
+        context_args = {
+            'viewport': {'width': 1920, 'height': 1080}, 
+            'locale': 'zh-CN',
+            'record_video_dir': VIDEO_DIR, # 📹 开启录屏
+            'record_video_size': {'width': 1920, 'height': 1080}
+        }
         
-        print(f"👉 预访问域名以植入 Cookie...")
-        # Selenium 必须先访问域名才能设置 Cookie
+        if os.path.exists(AUTH_FILE):
+            print(f"📂 加载本地/恢复的 Cookie: {AUTH_FILE}")
+            context_args['storage_state'] = AUTH_FILE
+
+        context = browser.new_context(**context_args)
+        page = context.new_page()
+        
+        # 反爬虫特征屏蔽
+        page.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
+        page.set_default_timeout(60000)
+
         try:
-            # 先访问登录页或主页，允许失败（可能遇到 CF 盾），主要为了定域
-            driver.get("https://dashboard.katabump.com/login")
-            time.sleep(3)
-        except: pass
-
-        # 植入 Cookie
-        print("🍪 正在植入 Cookies...")
-        cookies = parse_cookie_string(COOKIE_STR)
-        for cookie in cookies:
+            # 访问
+            print(f"👉 前往目标 URL...")
             try:
-                driver.add_cookie(cookie)
+                page.goto(TARGET_URL, wait_until='domcontentloaded')
+            except:
+                pass
+            page.wait_for_timeout(3000)
+
+            # --- 自动登录逻辑 ---
+            if "login" in page.url or page.locator("#email").is_visible():
+                print("🛑 Cookie 失效或不存在，执行登录...")
+                try:
+                    page.fill("#email", EMAIL)
+                    page.fill("#password", PASSWORD)
+                    if page.locator("#rememberMe").is_visible():
+                        page.check("#rememberMe")
+                    page.click("#submit")
+
+                    print("⏳ 等待跳转...")
+                    page.wait_for_url(lambda u: "login" not in u, timeout=30000)
+                    print("✅ 登录成功")
+                    
+                    if TARGET_URL not in page.url:
+                        page.goto(TARGET_URL)
+                except Exception as e:
+                    err_msg = f"❌ 登录失败: {e}"
+                    print(err_msg)
+                    send_tg(err_msg)
+                    context.close()
+                    browser.close()
+                    return
+
+            # ==========================================
+            # 🤖 Renew 流程 (你的核心逻辑)
+            # ==========================================
+            print("\n🤖 寻找 Renew 按钮...")
+            page.wait_for_timeout(2000)
+
+            try:
+                # 尝试触发弹窗
+                if page.locator('[data-bs-target="#renew-modal"]').is_visible():
+                    page.locator('[data-bs-target="#renew-modal"]').click()
+                elif page.get_by_text("Renew", exact=True).count() > 0:
+                    page.get_by_text("Renew", exact=True).first.click()
+                else:
+                    print("⚠️ 页面上没找到显式的 Renew 按钮 (可能已经续期或未加载)")
+            except:
+                pass
+
+            print(f"⏳ 弹窗触发流程，等待 20 秒 (倒计时)...")
+            for i in range(20, 0, -1):
+                # GitHub Log不支持 \r 刷新，改为每5秒打印一次或直接sleep
+                if i % 5 == 0:
+                    print(f"倒计时: {i} ...")
+                time.sleep(1)
+            
+            # --- 核心修复：防止 Tab 退出弹窗 ---
+            print("🔒 【关键步骤】点击弹窗内部文本，锁定焦点...")
+            try:
+                text_el = page.locator("#renew-modal .modal-body p").first
+                if text_el.is_visible():
+                    text_el.click()
+                else:
+                    page.locator("#renew-modal .modal-content").click()
             except Exception as e:
-                print(f"⚠️ Cookie 设置警告: {e}")
+                print(f"⚠️ 焦点锁定轻微报错: {e}")
 
-        # 正式访问目标页面
-        print(f"👉 正式访问: {TARGET_URL}")
-        driver.get(TARGET_URL)
-        
-        # 截图调试 1
-        driver.save_screenshot("debug_screenshots/1_page_loaded.png")
-        time.sleep(5)
-
-        # 检查是否登录成功（检查 email 输入框是否存在，存在则说明没登录）
-        if "login" in driver.current_url or len(driver.find_elements(By.NAME, "email")) > 0:
-            print("❌ Cookie 失效或遇到 CF 拦截")
-            driver.save_screenshot("debug_screenshots/login_failed.png")
-            send_tg("❌ 机场签到失败：Cookie 失效或被 CF 拦截")
-            return
-
-        # 查找 Renew 按钮
-        # 尝试多种定位方式
-        renew_btns = driver.find_elements(By.XPATH, "//*[contains(text(), 'Renew')]")
-        if not renew_btns:
-            renew_btns = driver.find_elements(By.CSS_SELECTOR, '[data-bs-target="#renew-modal"]')
-        
-        if renew_btns:
-            print("🖱️ 找到 Renew 按钮，准备点击...")
-            # 滚动到按钮处
-            driver.execute_script("arguments[0].scrollIntoView();", renew_btns[0])
-            time.sleep(1)
-            try:
-                renew_btns[0].click()
-            except:
-                driver.execute_script("arguments[0].click();", renew_btns[0])
-
-            # ==========================================
-            # 👇 严格遵守你的 15秒 + Tab 流程
-            # ==========================================
-            print("⏳ (1/3) 严格等待 15 秒...")
-            time.sleep(15)
-
-            # 尝试点击 Modal 文本区域以获取焦点
-            print("🔒 点击弹窗区域锁定焦点...")
-            try:
-                modal_body = driver.find_element(By.CSS_SELECTOR, "#renew-modal .modal-body")
-                modal_body.click()
-            except:
-                # 如果找不到具体 body，点击页面中心
-                ActionChains(driver).move_by_offset(960, 540).click().perform()
-            
             time.sleep(1)
 
-            print("⌨️ 执行键盘流: Tab x2 -> Space")
-            
-            actions = ActionChains(driver)
-            
-            # Tab 1
-            actions.send_keys(Keys.TAB).pause(random.uniform(0.8, 1.5))
-            # Tab 2
-            actions.send_keys(Keys.TAB).pause(random.uniform(0.8, 1.5))
-            # Space
-            actions.send_keys(Keys.SPACE)
-            
-            print("▶️ 发送按键指令...")
-            actions.perform()
+            print("⌨️  按下 TAB (第1次)...")
+            page.keyboard.press("Tab")
+            time.sleep(0.5)
 
-            print("⏳ 验证码动作完成，等待 6 秒...")
-            time.sleep(6)
-            driver.save_screenshot("debug_screenshots/2_after_captcha.png")
-            # ==========================================
+            print("⌨️  按下 TAB (第2次)...")
+            page.keyboard.press("Tab")
+            time.sleep(0.5)
 
-            # 提交 Renew
+            print("⌨️  按下 SPACE (空格) 激活验证！")
+            page.keyboard.press("Space")
+
+            print("⏳ 等待 5 秒验证生效...")
+            time.sleep(5)
+
             print("🚀 提交 Renew...")
             try:
-                confirm_btn = driver.find_element(By.CSS_SELECTOR, "#renew-modal button.btn-primary")
-                confirm_btn.click()
+                submit_btn = page.locator("#renew-modal button.btn-primary", has_text="Renew")
+                if submit_btn.is_visible():
+                    submit_btn.click()
+                else:
+                    page.keyboard.press("Enter")
             except:
-                print("⚠️ 找不到确认按钮，尝试回车提交")
-                ActionChains(driver).send_keys(Keys.ENTER).perform()
+                pass
 
+            print("⏳ 等待结果...")
             time.sleep(5)
-            driver.save_screenshot("debug_screenshots/3_final_result.png")
 
-            page_source = driver.page_source.lower()
-            if "success" in page_source or len(driver.find_elements(By.CLASS_NAME, "alert-success")) > 0:
-                print("✅✅✅ 续期成功！")
-                send_tg("✅ Katabump 续期成功！")
+            # 截图留证
+            page.screenshot(path="result.png")
+
+            status_msg = ""
+            if page.locator("div.alert-success").is_visible():
+                status_msg = "✅ VPS 续期成功！"
             else:
-                print("❓ 未检测到成功标志，请检查截图")
-                send_tg("⚠️ 脚本执行完毕，但未检测到明确成功信号，请检查 Artifacts 截图")
-        
-        else:
-            print("ℹ️ 未找到 Renew 按钮 (可能无需续费或页面结构变更)")
-            driver.save_screenshot("debug_screenshots/no_renew_button.png")
+                status_msg = "ℹ️ 流程结束，请检查视频回放确认结果。"
 
-    except Exception as e:
-        print(f"❌ 运行严重错误: {e}")
-        send_tg(f"❌ 脚本运行出错: {e}")
-        # 出错时截图
-        try:
-            driver.save_screenshot("debug_screenshots/error_state.png")
-        except: pass
-    
-    finally:
-        try:
-            driver.quit()
-        except: pass
+            print(status_msg)
+            send_tg(status_msg)
+
+        except Exception as e:
+            err_msg = f"❌ 运行过程中发生错误: {e}"
+            print(err_msg)
+            send_tg(err_msg)
+            # 发生错误也截图
+            try:
+                page.screenshot(path="error.png")
+            except:
+                pass
+            raise e
+        finally:
+            print("🔴 关闭浏览器，保存视频...")
+            context.close() # 必须关闭context才能保存视频
+            browser.close()
 
 if __name__ == "__main__":
     run()
