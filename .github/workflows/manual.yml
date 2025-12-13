@@ -1,8 +1,8 @@
-name: VPS Auto Renew (Pure)
+name: VPS Auto Renew (Video)
 
 on:
   schedule:
-    - cron: '30 1 * * *' # 北京时间 09:30
+    - cron: '30 1 * * *'
   workflow_dispatch:
 
 jobs:
@@ -19,7 +19,6 @@ jobs:
         python-version: '3.9'
 
     - name: Install Dependencies
-      # ⚠️ 注意：这里只安装 requests 和 playwright，绝对不会报错
       run: |
         pip install playwright requests
         playwright install chromium
@@ -34,9 +33,12 @@ jobs:
         USER_AGENT: ${{ secrets.USER_AGENT }}
       run: python main.py
 
-    - name: Upload Debug Screenshots
+    # --- 修改了这里，上传视频和截图 ---
+    - name: Upload Debug Artifacts
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: debug-screenshots
-        path: "*.png"
+        name: debug-recordings
+        path: |
+          *.png
+          videos/
