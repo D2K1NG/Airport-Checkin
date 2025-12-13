@@ -1,76 +1,53 @@
-name: VPS Auto Renew (Manual)
+name: VPS Auto Renew
 
 on:
-  workflow_dispatch:
+  schedule:
+    # 北京时间每天上午 9 点运行 (UTC时间 1:00)
+    # 你可以根据需要调整 cron 表达式
+    - cron: '0 1 * * *'
+  workflow_dispatch: # 允许手动点按钮运行
 
 jobs:
   renew:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    
+    # 设置超时防止卡死
+    timeout-minutes: 15
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.10'
 
-    # ===============================
-    # 安装 Python 依赖
-    # ===============================
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
+        # 确保安装 playwright 和 requests
         pip install -r requirements.txt
 
-    # ===============================
-    # 安装 Playwright 浏览器 + 依赖
-    # ===============================
-    - name: Install Playwright Browsers
+    - name: Install Playwright Browsers (修复找不到命令问题)
       run: |
+        # 显式使用 python -m 调用 playwright，确保找到命令
         python -m playwright install chromium
         python -m playwright install-deps
 
-    # ===============================
-    # ✅ Playwright 环境验证（关键）
-    # ===============================
-    - name: Verify Playwright Environment
-      run: |
-        python - << 'EOF'
-        from playwright.sync_api import sync_playwright
-
-        print("🔍 Verifying Playwright installation...")
-
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.goto("https://example.com")
-            print("✅ Chromium launched successfully")
-            browser.close()
-
-        print("🎉 Playwright environment OK")
-        EOF
-
-    # ===============================
-    # 运行主脚本
-    # ===============================
     - name: Run Auto Renew Script
       env:
+        # 这里映射你在 GitHub Secrets 中填写的变量
         URL: ${{ secrets.URL }}
         GMAIL: ${{ secrets.GMAIL }}
         KATAMIMA: ${{ secrets.KATAMIMA }}
         TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
         TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         AUTH_JSON: ${{ secrets.AUTH_JSON }}
-      run: |
-        python main.py
+      run: python main.py
 
-    # ===============================
-    # 上传录像 / 截图 / Cookie
-    # ===============================
-    - name: Upload Artifacts
+    - name: Upload Videos, Screenshots & Auth File
+      # 无论成功失败，都上传录屏和截图供检查
       if: always()
       uses: actions/upload-artifact@v4
       with:
@@ -78,5 +55,6 @@ jobs:
         path: |
           videos/
           *.png
-          auth.json
-        retention-days: 3
+          auth.json # 上传 auth.json 让你能看到新的 cookie 是否保存成功
+        retention-days: 7
+        
