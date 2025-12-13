@@ -12,28 +12,26 @@ jobs:
     runs-on: ubuntu-latest
     
     # 设置超时防止卡死
-    timeout-minutes: 15
+    timeout-minutes: 10
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v3
 
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v4
       with:
         python-version: '3.10'
 
     - name: Install dependencies
       run: |
-        # 确保 pip 升级，并在当前环境中安装依赖
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        
+
     - name: Install Playwright Browsers
       run: |
-        # 显式使用 python -m 调用 playwright，确保找到命令
-        python -m playwright install chromium
-        python -m playwright install-deps
+        playwright install chromium
+        playwright install-deps
 
     - name: Run Auto Renew Script
       env:
@@ -44,11 +42,9 @@ jobs:
         TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
         TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         AUTH_JSON: ${{ secrets.AUTH_JSON }}
-      run: |
-        # 脚本运行
-        python main.py
+      run: python main.py
 
-    - name: Upload Videos, Screenshots & Auth File
+    - name: Upload Videos & Screenshots
       # 无论成功失败，都上传录屏和截图供检查
       if: always()
       uses: actions/upload-artifact@v4
@@ -58,4 +54,5 @@ jobs:
           videos/
           *.png
           auth.json
-        retention-days: 7
+        retention-days: 3
+
