@@ -25,6 +25,17 @@ jobs:
         playwright install chromium
         playwright install-deps
 
+    # ✅ 修复点 1：Restore 步骤
+    - name: Restore Cookie Cache
+      uses: actions/cache@v4
+      with:
+        path: auth.json
+        # 加上 run_attempt 确保本次运行的 key 唯一
+        key: auth-cookie-${{ github.run_id }}-${{ github.run_attempt }}
+        # 关键：restore-keys 允许它寻找之前任何以 auth-cookie- 开头的缓存（包括上一次 run_id 的）
+        restore-keys: |
+          auth-cookie-
+
     - name: Run Script
       env:
         URL: ${{ secrets.URL }}
@@ -35,9 +46,8 @@ jobs:
       run: |
         xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" python main.py
         
-    # 🔴 变化：上传视频和轨迹文件
     - name: Upload Artifacts (Video & Trace)
-      if: always() # 即使脚本失败也要上传，方便排查
+      if: always()
       uses: actions/upload-artifact@v4
       with:
         name: debug-artifacts
@@ -45,3 +55,12 @@ jobs:
           trace.zip
           videos/
           *.png
+
+    # ✅ 修复点 2：Save 步骤
+    - name: Save Cookie Cache
+      if: always()
+      uses: actions/cache/save@v4
+      with:
+        path: auth.json
+        # 同样加上 run_attempt，确保保存时不与已存在的 key 冲突
+        key: auth-cookie-${{ github.run_id }}-${{ github.run_attempt }}
