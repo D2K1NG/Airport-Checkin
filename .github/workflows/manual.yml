@@ -1,44 +1,57 @@
-name: VPS Auto Renew
+name: Katabump Auto Renew
 
 on:
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '30 0 * * *'
   workflow_dispatch:
 
 jobs:
-  renew:
+  run_script:
     runs-on: ubuntu-latest
-
+    
     steps:
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.10'
 
-    - name: Install Dependencies
+    - name: Install dependencies
       run: |
-        pip install requests playwright
+        pip install playwright requests
         playwright install chromium
+        playwright install-deps
 
-    - name: Run Renew Script
+    # 1. 尝试恢复上次运行的 Cache (优先级最高)
+    - name: Restore Cookie Cache
+      uses: actions/cache@v4
+      with:
+        path: auth.json
+        # 使用简单的 key，每次都尝试匹配最新的
+        key: auth-cookie-${{ github.run_id }}
+        restore-keys: |
+          auth-cookie-
+
+    # 2. 运行脚本
+    # 逻辑：如果 Cache 里没有 auth.json，Python 脚本会去读取 COOKIE Secret 生成一个。
+    - name: Run Script
       env:
+        COOKIE: ${{ secrets.COOKIE }}  # 👈 关键：注入 Secret
         GMAIL: ${{ secrets.GMAIL }}
         KATAMIMA: ${{ secrets.KATAMIMA }}
-        TG_TOKEN: ${{ secrets.TG_TOKEN }}
-        TG_USER_ID: ${{ secrets.TG_USER_ID }}
-        COOKIE: ${{ secrets.COOKIE }}
-        URL: ${{ secrets.URL }}  # 👈 这里必须加上
-      run: python main.py
+        TGBOT: ${{ secrets.TGBOT }}
+        TGUSERID: ${{ secrets.TGUSERID }}
+        URL: ${{ secrets.URL }}
+        USER_AGENT: ${{ secrets.USER_AGENT }}
+      run: |
+        xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" python main.py
 
-    - name: Upload Debug Artifacts
+    # 3. 保存最新的 auth.json 到 Cache (供下次使用)
+    - name: Save Cookie Cache
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/cache/save@v4
       with:
-        name: debug-artifacts
-        path: |
-          *.png
-          videos/*.webm
-        retention-days: 3
+        path: auth.json
+        key: auth-cookie-${{ github.run_id }}
