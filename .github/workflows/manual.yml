@@ -2,9 +2,8 @@ name: VPS Auto Renew
 
 on:
   schedule:
-    # 北京时间每天早上 8:00 (UTC 0:00)
     - cron: '0 0 * * *'
-  workflow_dispatch: # 允许手动触发
+  workflow_dispatch:
 
 jobs:
   renew:
@@ -28,15 +27,18 @@ jobs:
       env:
         GMAIL: ${{ secrets.GMAIL }}
         KATAMIMA: ${{ secrets.KATAMIMA }}
+        TG_TOKEN: ${{ secrets.TG_TOKEN }}
+        TG_USER_ID: ${{ secrets.TG_USER_ID }}
+        COOKIE: ${{ secrets.COOKIE }}
+        URL: ${{ secrets.URL }}  # 👈 这里必须加上
       run: python main.py
 
-    # 👇👇👇 修改了这里，增加了视频文件的上传 👇👇👇
-    - name: Upload Debug Artifacts (Screenshots & Video)
-      if: always() # 无论成功失败都上传，方便排查问题
+    - name: Upload Debug Artifacts
+      if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: debug-artifacts # Artifact 的名称
+        name: debug-artifacts
         path: |
           *.png
           videos/*.webm
-        retention-days: 3 # 文件保留3天
+        retention-days: 3
