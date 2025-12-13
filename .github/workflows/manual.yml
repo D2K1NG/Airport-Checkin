@@ -21,9 +21,11 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install playwright requests
-        playwright install chromium
-        playwright install-deps
+        # 安装 undetected-chromedriver 和 selenium
+        pip install -r requirements.txt
+        # 确保 Chrome 存在 (Ubuntu-latest 通常自带，但以此确保)
+        sudo apt-get update
+        sudo apt-get install -y google-chrome-stable
 
     - name: Run Script
       env:
@@ -31,15 +33,16 @@ jobs:
         COOKIE: ${{ secrets.COOKIE }} 
         TGBOT: ${{ secrets.TGBOT }}
         TGUSERID: ${{ secrets.TGUSERID }}
-        USER_AGENT: ${{ secrets.USER_AGENT }}
+        # Selenium 不需要 USER_AGENT 变量，它使用真实的 Chrome 指纹
       run: |
+        # 使用 xvfb 运行 Python，模拟真实显示器环境
+        # 这是绕过 Cloudflare 检测的关键步骤之一
         xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" python main.py
         
-    - name: Upload Artifacts
+    - name: Upload Artifacts (Screenshots)
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: debug-results
+        name: debug-screenshots
         path: |
-          videos/
-          *.png
+          debug_screenshots/
